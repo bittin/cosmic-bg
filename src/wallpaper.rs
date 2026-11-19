@@ -330,23 +330,24 @@ impl Wallpaper {
                         let span = tracing::debug_span!("Wallpaper::timer");
                         let _handle = span.enter();
 
-                        let Some(item) = state
+                        let Some(index) = state
                             .wallpapers
-                            .iter_mut()
-                            .find(|w| w.entry.output == cosmic_bg_clone)
+                            .iter()
+                            .position(|w| w.entry.output == cosmic_bg_clone)
                         else {
                             return TimeoutAction::Drop; // Drop if no item found for this timer
                         };
 
-                        if let Some(next) = item.image_queue.pop_front() {
-                            item.current_source = Some(Source::Path(next.clone()));
-                            if let Err(err) = item.save_state() {
+                        if let Some(next) = state.wallpapers[index].image_queue.pop_front() {
+                            let wallpaper = &mut state.wallpapers[index];
+                            wallpaper.current_source = Some(Source::Path(next.clone()));
+                            if let Err(err) = wallpaper.save_state() {
                                 error!("{err}");
                             }
 
-                            item.image_queue.push_back(next);
-                            item.clear_image();
-                            item.draw();
+                            wallpaper.image_queue.push_back(next);
+                            wallpaper.clear_image();
+                            state.fade_wallpaper(index);
 
                             return TimeoutAction::ToDuration(Duration::from_secs(rotation_freq));
                         }
@@ -360,9 +361,6 @@ impl Wallpaper {
 
     fn clear_image(&mut self) {
         self.current_image = None;
-        for l in &mut self.layers {
-            l.needs_redraw = true;
-        }
     }
 }
 
@@ -434,23 +432,23 @@ mod tests {
         // Assume XDG_DATA_DIRS does NOT contain this temp dir (which is true)
         let xdg_data_dirs: Vec<String> = Vec::new();
 
-        if let Ok(source) = source.canonicalize() {
-            if source.is_dir() {
-                if xdg_data_dirs
-                    .iter()
-                    .any(|xdg_data_dir| source.starts_with(xdg_data_dir))
+        if let Ok(source) = source.canonicalize()
+            && source.is_dir()
+        {
+            if xdg_data_dirs
+                .iter()
+                .any(|xdg_data_dir| source.starts_with(xdg_data_dir))
+            {
+                // This block should NOT be hit
+                panic!("Test setup error: temp dir shouldn't be in XDG_DATA_DIRS");
+            } else {
+                for img_path in WalkDir::new(source)
+                    .follow_links(true)
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .filter(|p| p.path().is_file())
                 {
-                    // This block should NOT be hit
-                    panic!("Test setup error: temp dir shouldn't be in XDG_DATA_DIRS");
-                } else {
-                    for img_path in WalkDir::new(source)
-                        .follow_links(true)
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .filter(|p| p.path().is_file())
-                    {
-                        image_queue.push_front(img_path.path().into());
-                    }
+                    image_queue.push_front(img_path.path().into());
                 }
             }
         }
